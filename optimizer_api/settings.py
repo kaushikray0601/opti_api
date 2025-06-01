@@ -127,14 +127,12 @@ OPTIMIZER_TIME_LIMIT=300  # 5 minutes
 ENV_MODE = env("ENV_MODE", default="dev")
 IS_DOCKER = ENV_MODE == "docker"
 
-REDIS_HOST = env("REDIS_HOST", default="localhost")
-REDIS_PORT = env("REDIS_PORT", default="6379")
-REDIS_DB = env("REDIS_DB", default="0")
-
-ENV_MODE = env("ENV_MODE", default="dev")
 if ENV_MODE == "docker":
     CELERY_BROKER_URL = env("CELERY_BROKER_URL_DOCKER")
     CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND_DOCKER")
 else:
     CELERY_BROKER_URL = env("CELERY_BROKER_URL_DEV")
     CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND_DEV")
+
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
