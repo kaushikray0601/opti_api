@@ -1,0 +1,15 @@
+
+# --- .dockerignore ---
+# Save as: .dockerignore
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+.env
+venv/
+build/
+dist/
+node_modules/

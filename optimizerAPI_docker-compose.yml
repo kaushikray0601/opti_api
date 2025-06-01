@@ -1,0 +1,36 @@
+version: '3.9'
+
+services:
+  optimizer_api_web:
+    build: .
+    container_name: optimizer_api_web
+    command: python manage.py runserver 0.0.0.0:8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - optimizer_api_redis
+
+  optimizer_api_celery:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: optimizer_api_celery
+    command: celery -A optimizer_api worker --loglevel=info
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - optimizer_api_web
+      - optimizer_api_redis
+
+
+  optimizer_api_redis:
+    image: redis:7
+    container_name: optimizer_api_redis
+    ports:
+      - "6379:6379"
