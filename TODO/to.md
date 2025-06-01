@@ -5,4 +5,4 @@
 5. # in tasks.py currently we are using : cables_data = pd.read_json(StringIO(cables), orient='records')
    # instead try cables_data = pd.DataFrame(input_payload['cables']) for most robust design
 
-6. Test hithug upload
+6. Test githug upload
