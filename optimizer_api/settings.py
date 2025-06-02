@@ -13,14 +13,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-lbec)%-^mk@e5@ok23mj&s4gw2cl$%e%-x7(3a%@tmb_p3hdlz'
+SECRET_KEY = env('DJANGO_SECRET_KEY')
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG=(bool, False) 
+DEBUG = env.bool('DEBUG', default=False)
 
-# ALLOWED_HOSTS = ['*', 'optimizer_api_web:8000', 'localhost', '127.0.0.1', 'optimizer_api.local']
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = ['optimizer_api.local', 'localhost', '127.0.0.1','optimizer_api_web']
 USE_X_FORWARDED_HOST = True
 
 
@@ -139,17 +137,22 @@ else:
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 
+#Add security-related settings for production:
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+CSRF_COOKIE_SECURE = True
+SESSION_COOKIE_SECURE = True
+X_FRAME_OPTIONS = 'DENY'
 
-# Add to settings.py
-from django.http.request import split_domain_port
-
-class MyRequestHandler:
-    def __init__(self, get_response):
-        self.get_response = get_response
-
-    def __call__(self, request):
-        # Strip the port from the host before the check
-        host, _ = split_domain_port(request.get_host())
-        request.META['HTTP_HOST'] = host
-        return self.get_response(request)
-
+# Logging 
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {'format': '{levelname} {asctime} {module} {message}', 'style': '{'},
+        'simple': {'format': '{levelname} {message}', 'style': '{'},
+    },
+    'handlers': {
+        'console': {'class': 'logging.StreamHandler', 'formatter': 'simple'},
+    },
+    'root': {'handlers': ['console'], 'level': 'INFO'},
+}
