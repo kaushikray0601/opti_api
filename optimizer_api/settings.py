@@ -19,7 +19,9 @@ SECRET_KEY = 'django-insecure-lbec)%-^mk@e5@ok23mj&s4gw2cl$%e%-x7(3a%@tmb_p3hdlz
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['*', 'optimizer_api_web', 'localhost', '127.0.0.1', 'optimizer_api.local']
+# ALLOWED_HOSTS = ['*', 'optimizer_api_web:8000', 'localhost', '127.0.0.1', 'optimizer_api.local']
+ALLOWED_HOSTS = ['*']
+USE_X_FORWARDED_HOST = True
 
 
 # Application definition
@@ -34,7 +36,7 @@ INSTALLED_APPS = [
     'rest_framework',
 ]
 
-MIDDLEWARE = [
+MIDDLEWARE = [    
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -136,3 +138,18 @@ else:
 
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
+
+
+# Add to settings.py
+from django.http.request import split_domain_port
+
+class MyRequestHandler:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        # Strip the port from the host before the check
+        host, _ = split_domain_port(request.get_host())
+        request.META['HTTP_HOST'] = host
+        return self.get_response(request)
+

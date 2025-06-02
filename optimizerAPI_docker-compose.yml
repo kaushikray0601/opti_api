@@ -13,7 +13,8 @@ services:
       - .env
     depends_on:
       - optimizer_api_redis
-
+    networks:
+      - shared_network
   optimizer_api_celery:
     build:
       context: .
@@ -26,9 +27,16 @@ services:
       - .env
     depends_on:
       - optimizer_api_web
-      - optimizer_api_redis
-
+      - optimizer_api_redis  
+    networks:
+      - shared_network
 
   optimizer_api_redis:
     image: redis:7
-    container_name: optimizer_api_redis   
+    container_name: optimizer_api_redis
+    networks:
+      - shared_network
+  
+networks:
+  shared_network:
+    external: true
