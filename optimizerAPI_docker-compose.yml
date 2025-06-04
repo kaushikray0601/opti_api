@@ -2,13 +2,14 @@ services:
   optimizer_api_web:
     build:
       context: .
+      dockerfile: Dockerfile      
       args:
         DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
-    container_name: optimizer_api_web
-    ports:
-      - "8000:8000"
+    command: gunicorn optimizer_api.wsgi:application --bind 0.0.0.0:8000
+    container_name: optimizer_api_web 
     volumes:
       - .:/app
+      - ./optimizer_api/staticfiles:/app/staticfiles
     env_file:
       - .env
     depends_on:
@@ -18,16 +19,17 @@ services:
   optimizer_api_celery:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: optimizer_api_celery
+      dockerfile: celery_worker.Dockerfile
     command: celery -A optimizer_api worker --loglevel=info
+    container_name: optimizer_api_celery
     volumes:
       - .:/app
+      - ./optimizer_api/staticfiles:/app/staticfiles
     env_file:
       - .env
     depends_on:
       - optimizer_api_web
-      - optimizer_api_redis  
+      - optimizer_api_redis
     networks:
       - shared_network
 
@@ -36,7 +38,21 @@ services:
     container_name: optimizer_api_redis
     networks:
       - shared_network
-  
+
+  nginx:
+      build:
+        context: .
+        dockerfile: nginx.Dockerfile
+      ports:
+        - "8080:80"
+      container_name: optimizer_api_nginx
+      depends_on:
+        - optimizer_api_web
+      volumes:
+        - ./optimizer_api/staticfiles:/app/staticfiles
+      networks:
+        - shared_network
+
 networks:
   shared_network:
     external: true
