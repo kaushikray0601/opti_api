@@ -29,10 +29,6 @@ RUN pip install --upgrade pip && \
 # Copy project files
 COPY . .
 
-# Collect static files if needed
-# RUN python manage.py collectstatic --noinput
-
-
 # Make entrypoint script executable
 RUN chmod +x /app/entrypoint.sh
 
@@ -40,5 +36,5 @@ EXPOSE 8000
 
 ENTRYPOINT ["/app/entrypoint.sh"]
 
-# Use Gunicorn as WSGI server
-CMD ["gunicorn", "optimizer_api.wsgi:application", "--bind", "0.0.0.0:8000", "--workers=3", "--threads=2", "--timeout=120"]
+# Use Gunicorn as WSGI server > shifted to docker-compose
+# CMD ["gunicorn", "optimizer_api.wsgi:application", "--bind", "0.0.0.0:8000", "--workers=3", "--threads=2", "--timeout=120"]
