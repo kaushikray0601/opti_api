@@ -1,45 +1,58 @@
 services:
-  optimizer_api_web:
+  optimizer-api-web:
     build:
       context: .
-      dockerfile: Dockerfile      
+      dockerfile: Dockerfile
       args:
         DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
     command: ["gunicorn", "optimizer_api.wsgi:application", "--bind", "0.0.0.0:8000", "--workers=3", "--threads=2", "--timeout=120"]    
-    container_name: optimizer_api_web 
+    # container_name: optimizer_api_web
+    # volumes:
+    #   - .:/app
+    #   - ./optimizer_api/staticfiles:/app/staticfiles
     volumes:
-      - .:/app
-      - ./optimizer_api/staticfiles:/app/staticfiles
+      - optimizer_static:/app/staticfiles
+      - optimizer_media:/app/mediafiles
     env_file:
       - .env
     depends_on:
       - optimizer_api_redis
     networks:
       - shared_network
+    healthcheck:
+      test: ["CMD-SHELL","curl -fsS -o /dev/null http://127.0.0.1:8000/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
   optimizer_api_celery:
     build:
       context: .
       dockerfile: celery_worker.Dockerfile
     command: celery -A optimizer_api worker --loglevel=info
     container_name: optimizer_api_celery
+    # volumes:
+    #   - .:/app
+    #   - ./optimizer_api/staticfiles:/app/staticfiles
     volumes:
-      - .:/app
-      - ./optimizer_api/staticfiles:/app/staticfiles
+      - optimizer_media:/app/mediafiles
     env_file:
       - .env
     depends_on:
-      - optimizer_api_web
+      - optimizer-api-web
       - optimizer_api_redis
     networks:
       - shared_network
+    restart: unless-stopped
 
   optimizer_api_redis:
     image: redis:7
     container_name: optimizer_api_redis
     networks:
       - shared_network
+    restart: unless-stopped
 
-  nginx:
+  optimizer-api-nginx:
       build:
         context: .
         dockerfile: nginx.Dockerfile
@@ -47,12 +60,20 @@ services:
         - "8080:80"
       container_name: optimizer_api_nginx
       depends_on:
-        - optimizer_api_web
+        - optimizer-api-web
       volumes:
-        - ./optimizer_api/staticfiles:/app/staticfiles
+        # - ./optimizer_api/staticfiles:/app/staticfiles
+        - optimizer_static:/app/staticfiles:ro   # nginx serves static
       networks:
         - shared_network
+      restart: unless-stopped
+
+
+volumes:
+  optimizer_static:
+  optimizer_media:
 
 networks:
   shared_network:
+    name: shared_network
     external: true

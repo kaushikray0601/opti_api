@@ -18,7 +18,7 @@ SECRET_KEY = env('DJANGO_SECRET_KEY')
 DEBUG=(bool, False) 
 DEBUG = env.bool('DEBUG', default=False)
 
-ALLOWED_HOSTS = ['optimizer_api.local', 'localhost', '127.0.0.1','optimizer_api_web']
+ALLOWED_HOSTS = ['optimizer_api.local', 'localhost', '127.0.0.1','optimizer-api-web']
 USE_X_FORWARDED_HOST = True
 
 
