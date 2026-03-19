@@ -1,0 +1,33 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Python virtual environments
+venv/
+.venv/
+
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+
+# Django generated/runtime files
+db.sqlite3
+*.sqlite3
+staticfiles/
+mediafiles/
+optimizer_api/staticfiles/
+
+# Editor/project-local files
+.vscode/
+TODO/
+
+# OS / misc
+.DS_Store
+Thumbs.db

@@ -1,15 +1,28 @@
+.git/
+.github/
+.vscode/
+TODO/
 
-# --- .dockerignore ---
-# Save as: .dockerignore
+.env
+.env.*
+!.env.example
+
+venv/
+.venv/
+node_modules/
 
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.db
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+db.sqlite3
 *.sqlite3
-.env
-venv/
+staticfiles/
+mediafiles/
+optimizer_api/staticfiles/
+
 build/
 dist/
-node_modules/
