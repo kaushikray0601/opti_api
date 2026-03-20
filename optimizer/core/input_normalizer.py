@@ -13,6 +13,16 @@ class OptimizerInputError(ValueError):
 
 
 @dataclass(slots=True)
+class NormalizedCableInput:
+    cable_df: pd.DataFrame
+    cable_rows: np.ndarray
+    cable_data: np.ndarray
+    unique_cable_types: list
+    unique_wbs: list
+    cables_by_type: dict
+
+
+@dataclass(slots=True)
 class NormalizedOptimizerInput:
     cable_df: pd.DataFrame
     drum_df: pd.DataFrame
@@ -132,34 +142,43 @@ def _index_by_type(index_array, length_array, type_array):
     return indexed
 
 
-def normalize_optimizer_inputs(cable_df, drum_df):
+def normalize_cable_inputs(cable_df):
     normalized_cable_df = normalize_cable_dataframe(cable_df)
-    normalized_drum_df = normalize_drum_dataframe(drum_df)
-
     cable_rows = normalized_cable_df.to_numpy(copy=True)
-    drum_rows = normalized_drum_df.to_numpy(copy=True)
-
     cable_data = _build_cable_data(cable_rows)
-    drum_data = _build_drum_data(drum_rows)
-
     cable_index = np.arange(cable_rows.shape[0], dtype=np.int32)
     cable_length = normalized_cable_df["cabDesignLen"].to_numpy(dtype=np.int64, copy=True)
     cable_type = normalized_cable_df["cabSpec"].to_numpy(copy=True)
 
+    return NormalizedCableInput(
+        cable_df=normalized_cable_df,
+        cable_rows=cable_rows,
+        cable_data=cable_data,
+        unique_cable_types=_ordered_unique(cable_type.tolist()),
+        unique_wbs=_ordered_unique(normalized_cable_df["wBS"].tolist()),
+        cables_by_type=_index_by_type(cable_index, cable_length, cable_type),
+    )
+
+
+def normalize_optimizer_inputs(cable_df, drum_df):
+    normalized_cable_input = normalize_cable_inputs(cable_df)
+    normalized_drum_df = normalize_drum_dataframe(drum_df)
+    drum_rows = normalized_drum_df.to_numpy(copy=True)
+    drum_data = _build_drum_data(drum_rows)
     drum_index = np.arange(drum_rows.shape[0], dtype=np.int32)
     drum_length = normalized_drum_df["manufLength"].to_numpy(dtype=np.int64, copy=True)
     drum_type = normalized_drum_df["cabSpec"].to_numpy(copy=True)
 
     return NormalizedOptimizerInput(
-        cable_df=normalized_cable_df,
+        cable_df=normalized_cable_input.cable_df,
         drum_df=normalized_drum_df,
-        cable_rows=cable_rows,
+        cable_rows=normalized_cable_input.cable_rows,
         drum_rows=drum_rows,
-        cable_data=cable_data,
+        cable_data=normalized_cable_input.cable_data,
         drum_data=drum_data,
-        unique_cable_types=_ordered_unique(cable_type.tolist()),
+        unique_cable_types=normalized_cable_input.unique_cable_types,
         unique_drum_types=_ordered_unique(drum_type.tolist()),
-        unique_wbs=_ordered_unique(normalized_cable_df["wBS"].tolist()),
-        cables_by_type=_index_by_type(cable_index, cable_length, cable_type),
+        unique_wbs=normalized_cable_input.unique_wbs,
+        cables_by_type=normalized_cable_input.cables_by_type,
         drums_by_type=_index_by_type(drum_index, drum_length, drum_type),
     )

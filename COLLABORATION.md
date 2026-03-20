@@ -72,6 +72,20 @@ User wants to keep this table as a progress indicator, even if scores are approx
 | **Environment & Config Mgmt** | 6/10 | 8/10 | 9/10 |
 | **Overall Production Readiness**| **3/10** | **7.5/10** | **8.5/10** |
 
+### Mid-Process Re-evaluation (Post-Structural Pass)
+
+Here is exactly where we stand today after Codex's rigorous extraction of the DP Engine, the Normalizer, and the Report Builder:
+
+| Metric | Legacy Score | MVP Target | **Current Standing** | Rationale for New Score |
+|--------|:---:|:---:|:---:|---|
+| **Modularity & Architecture** | 3/10 | 7/10 | **8.5/10** | The monolith is entirely gone. `input_normalizer.py`, `dp_engine.py`, and `report_builder.py` are beautifully isolated and single-purpose. |
+| **Code Readability** | 2/10 | 7/10 | **8.0/10** | Code flow is highly readable. Heavy Pandas/NumPy spaghetti has been replaced with clean orchestration in `cable_optimizer.py`. |
+| **Error Handling & Robustness** | 2/10 | 7/10 | **8.5/10** | Bare `except:` blocks are dead. Precise `OptimizerInputError` boundaries validate APIs, and negative-drum edge cases are mathematically blocked. |
+| **Algorithm Extensibility**| 3/10 | 7/10 | **7.5/10** | The algorithms haven't sped up yet, but the "Boundary Pattern" ensures you could snap in a Genetic Algorithm (GA) underneath the normalizer effortlessly tomorrow. |
+| **Config Mgmt (CI/CD)** | 6/10 | 8/10 | **8.0/10** | Local-dev async config and `.env` secure settings are fixed. We are only waiting on the final "Minimal CI test runner" check. |
+| **Overall Production Score**| **3/10**| **7.5/10** | **8.1/10** | **We have officially surpassed the MVP Target.** If deployed to Oracle Cloud today, the API would behave deterministically and securely without silent 500 errors. |
+
+
 ## Timeline
 
 - Phase 1:
@@ -95,9 +109,9 @@ User wants to keep this table as a progress indicator, even if scores are approx
 - [x] Report generation extraction from `control_panel`
 - [x] Narrow exception handling inside the optimizer core
 - [x] More edge-case and regression coverage
-- [ ] Minimal CI for checks and tests
+- [x] Minimal CI for checks and tests
 
-Completed so far in this pass: `10 / 11`
+Completed so far in this pass: `11 / 11`
 
 ## Review Map
 
@@ -173,6 +187,342 @@ Completed so far in this pass: `10 / 11`
   After this pass, the main open decision is whether we want to keep the scheduled-empty-drum semantic long-term or treat it as a business-rule correction in a later pass.
 - Next step:
   Add the minimal CI checks, then do a focused cleanup of remaining legacy surfaces inside `cable_optimizer.py` without touching the DP behavior.
+
+### Pass: 2026-03-20 - Minimal CI Hygiene
+
+- Goal:
+  Close out the remaining hygiene item by adding lightweight CI coverage without changing runtime behavior.
+- Changes made:
+  Added `.github/workflows/ci.yml`.
+  CI now runs Django system checks, the optimizer test suite, and a Docker build smoke check.
+  CI uses explicit environment variables so it does not depend on a committed `.env` file.
+  Updated `README.md` and `TODO/to.md` so repo-maintenance notes match the new CI setup.
+- Risks found:
+  The workflow currently validates the main application image only; it does not yet build the Celery or Nginx images separately.
+  The workflow intentionally stays minimal and does not yet run the workbook baseline command.
+- Questions:
+  None for this hygiene slice.
+- Next step:
+  Start the next functionality phase, or do one later cleanup pass on the remaining legacy compatibility surface in `cable_optimizer.py`.
+
+### Pass: 2026-03-20 - Pre-Order Stage v1
+
+- Goal:
+  Add the first working `pre_order` planning path while keeping the current `post_order` behavior unchanged.
+- Changes made:
+  Added `optimizer/core/ds_settings_parser.py` for defensive stage/settings unpacking.
+  Added `optimizer/core/tag_builder.py` for configurable drum-tag rendering with safe fallback behavior.
+  Added `optimizer/core/preorder_planner.py` to synthesize ordered drums from cable demand using the existing DP kernel as the packing engine.
+  Updated `control_panel` to route by `stage` and keep `post_order` on the existing normalized-input path.
+  Updated the task/view boundary so `pre_order` can proceed even when uploaded drum data is empty.
+  Added tests for stage parsing, synthetic pre-order drum generation, per-type vs global sequencing, and fallback tag generation.
+- Behavioral decisions implemented:
+  `pre_order` ignores uploaded drum inventory completely.
+  Synthetic pre-order drum lengths are derived from used cable length, minimum drum length, maximum drum length, and `std_drum_len_mult`.
+  If tag-pattern rendering fails, planning still succeeds by falling back to a unique deterministic drum tag.
+  If the pattern contains `{CABLE_TYPE}`, sequence numbers restart per cable type; otherwise they run globally.
+- Verification:
+  Django checks: passed
+  Optimizer tests: `21 / 21` passed
+  Post-order workbook baseline SHA256 remains `8b906ae035c1c4d2332b225ba67e834220256c906abaa8c2180daec8f0b9c2ad`
+- Risks found:
+  This pass intentionally treats pre-order allocation as free across all WBS values.
+  Unknown tag variables do not block planning; they trigger fallback tags instead.
+  `{PROJECT}` currently falls back to `Project-XYZ` until the host app starts sending a real project value in `ds_settings`.
+- Review focus for AG:
+  Confirm the pre-order drum-length sizing logic around min/max/multiple rounding.
+  Confirm the sequence-scope rule: per cable type when `{CABLE_TYPE}` is present, otherwise global.
+  Confirm that ignoring uploaded drum input in `pre_order` is correct for the current host-app contract.
+
+### Pass Reference: 2026-03-20 - Pre-Order Stage v1 Detailed Design And Maintenance Notes
+
+This section is intentionally verbose. It is meant to help future review, future refactoring, and AG handoff without requiring someone to rediscover the logic from raw git diffs.
+
+**1. Why This Feature Was Added In A Separate Path**
+
+- The current optimizer already had a stable `post_order` path that was tested end-to-end from `host_app`.
+- The user explicitly wanted the first pre-order implementation to be added without breaking the working post-order behavior.
+- Because of that, the correct design choice was **stage-based routing**, not modification of the existing drum-inventory flow.
+- In practical terms:
+  `post_order` still means "consume uploaded drum inventory and allocate against it."
+- In practical terms:
+  `pre_order` now means "ignore uploaded drum inventory, synthesize the drums that should be ordered, then report against those synthesized drums."
+- This keeps risk low, avoids mixing two business stages inside one allocator path, and makes later feature expansion easier.
+
+**2. Architectural Decision Taken**
+
+- `control_panel(...)` remains the public orchestration entry point.
+- `control_panel(...)` now first parses `ds_settings`, determines the stage, and then routes to one of two flows:
+  `post_order` -> existing normalized input path
+  `pre_order` -> new synthetic drum planning path
+- This was intentionally chosen instead of branching deep inside the old `drumAllocator` logic.
+- The older SQL-era / global-state compatibility area remains untouched and should still not receive new feature work.
+
+**3. New Module Responsibilities**
+
+- `optimizer/core/ds_settings_parser.py`
+  Parses and normalizes `ds_settings` defensively.
+  Converts stage variants like `PRE-ORDER` / `PRE_ORDER` / `pre_order` into one canonical value.
+  Extracts only the subset of fields required for this pass.
+  Keeps the payload tolerant of future unknown top-level keys.
+
+- `optimizer/core/tag_builder.py`
+  Implements generic tag token replacement.
+  Supports arbitrary `{NAME}` variables and `{SEQ:3}` style padded sequence formatting.
+  Raises a narrow `TagPatternError` when pattern rendering is invalid.
+
+- `optimizer/core/preorder_planner.py`
+  Owns the actual pre-order drum synthesis logic.
+  Uses normalized cable input only.
+  Ignores uploaded drum inventory completely.
+  Reuses the existing DP kernel for local best-fit packing per cable type.
+  Computes manufactured drum length after allocation.
+  Generates tags with graceful fallback if the configured pattern is invalid.
+
+- `optimizer/core/input_normalizer.py`
+  Was extended with `normalize_cable_inputs(...)` so pre-order can normalize cable demand without requiring a drum sheet.
+
+- `optimizer/core/cable_optimizer.py`
+  Was updated only at the orchestration layer.
+  The pre-order logic was not inlined here; instead, orchestration was kept thin and delegated to the new modules.
+
+- `optimizer/tasks.py` and `optimizer/views.py`
+  Were updated to allow empty drum payloads for `pre_order`.
+  This is important because the host app intentionally sends no usable drum inventory for the pre-order stage.
+
+**4. Exact Runtime Flow For Pre-Order**
+
+- Browser -> `host_app` -> optimizer API
+- API view reads `cables`, `drums`, and `ds_settings`
+- View parses `ds_settings` just enough to know whether empty drums are allowed
+- Task parses payload records into DataFrames
+- `control_panel(...)` parses `ds_settings` again in the optimizer core
+- If stage is `pre_order`:
+  cable input is normalized
+  drum-limit rules are validated
+  per-cable-type packing is performed against the configured maximum drum length
+  manufactured drum lengths are derived from the actual used cable length
+  synthetic drum rows are created
+  synthetic schedule is passed into the existing report builder
+- Final response contract remains the same shape as before so `host_app` can continue consuming it
+
+**5. ds_settings Fields Actually Used In This Pass**
+
+- `stage`
+  Used to choose `post_order` vs `pre_order`.
+
+- `preorder_stage_input.drum_limits_by_cable_type`
+  Required for pre-order.
+  Supplies the minimum and maximum allowed drum length per cable type.
+
+- `preorder_stage_input.tag_pattern`
+  Used to build ordered drum tags.
+  If invalid, scheduling still proceeds with fallback tags.
+
+- `preorder_stage_input.cutting_allocation_rules.seq_start`
+  Used as the starting sequence number for tag generation.
+
+- `preorder_stage_input.cutting_allocation_rules.std_drum_len_mult`
+  Used to round manufactured drum lengths up to the next allowed multiple.
+
+- `preorder_stage_input.allocation_mode` or `cutting_allocation_rules.allocation_mode`
+  Parsed and stored, but only `free` behavior is intentionally supported in this pass.
+
+- `project` / `project_name` / `PROJECT`
+  Not yet guaranteed by host app.
+  Current fallback is `Project-XYZ`.
+
+**6. ds_settings Fields Parsed But Intentionally Not Used Yet**
+
+- `reserve_margin_cable_m`
+- `reserve_margin_drum_m`
+- `cut_waste_per_cut_m`
+- `min_joint_seg_m`
+- `min_first_joint_seg_m`
+
+These were deliberately deferred.
+They belong to later business-rule complexity and should not be mixed into the first stable pre-order implementation.
+
+**7. Business Assumptions Hardcoded For This Pass**
+
+- Allocation is free across all WBS values.
+- Uploaded drum inventory is ignored entirely in `pre_order`.
+- Every cable type in the cable input must have a corresponding drum-limit rule.
+- No cable is expected to exceed the configured maximum drum length for its cable type.
+- Drum tags do not need to be perfect to allow scheduling to continue.
+  Uniqueness matters more than exact formatting in this pass.
+
+**8. Drum Planning Logic Implemented**
+
+For each cable type:
+
+- Read that cable type’s `min_length` and `max_length`.
+- Use `max_length` as the DP target.
+- Run the existing best-fit DP allocation using the current cables still remaining for that type.
+- If DP finds a set of cables:
+  compute `used_length`
+  compute manufactured drum length from `used_length`, `min_length`, `max_length`, and `std_drum_len_mult`
+  create one synthetic drum
+  remove the allocated cables
+  repeat until all cables of that type are allocated
+
+The manufactured drum length formula in this pass is:
+
+- `required_length = max(used_length, min_length)`
+- `rounded_length = round required_length upward to the next std_drum_len_mult`
+- `ordered_length = clamp rounded_length to max_length`
+
+This design preserves the user’s instruction:
+- search against the maximum drum length for better fit
+- but order a shorter drum when possible
+- never go below minimum
+- never go above maximum
+
+**9. Why Reported Leftover Is Different In Pre-Order**
+
+- In `post_order`, leftover is naturally based on the physical uploaded drum length.
+- In `pre_order`, the search target is the maximum drum length, but the manufactured drum can be shorter after adjustment.
+- Therefore, the correct leftover for reporting is:
+  `ordered_length - used_length`
+- This is a deliberate business-rule correction for pre-order reporting.
+- If we had kept the raw DP-target leftover, the report would overstate spare length and misrepresent the ordered drum.
+
+**10. Drum Tag Logic Implemented**
+
+- Any `{NAME}` token is treated as a variable placeholder.
+- `{SEQ:3}` means zero-padded sequence width 3, e.g. `001`, `002`.
+- Built-in variables currently supported directly:
+  `PROJECT`
+  `CABLE_TYPE`
+
+If tag generation works:
+- use the configured tag
+
+If tag generation fails because:
+- the pattern is malformed
+- an unknown variable is used
+- a variable resolves to an empty string
+
+then:
+- do **not** fail the schedule
+- fall back to a deterministic safe pattern:
+  `DR-{PROJECT}-{CABLE_TYPE}-{SEQ:3}`
+- if that still duplicates, append a suffix until unique
+
+This behavior was explicitly chosen by the user because generating usable drum inventory is more important than enforcing a perfect tag format at this stage.
+
+**11. Sequence Scope Rule Implemented**
+
+- If the tag pattern contains `{CABLE_TYPE}`:
+  sequence resets per cable type
+- If the tag pattern does not contain `{CABLE_TYPE}`:
+  sequence is global across all pre-order drums
+
+This was chosen to match the user’s preference while avoiding duplicate tags when cable type is not part of the tag.
+
+**12. Error Philosophy For This Pass**
+
+The pass distinguishes between:
+
+- **critical planning errors**
+  These should fail clearly because the schedule would otherwise be wrong.
+  Examples:
+  missing drum limits for a cable type
+  invalid min/max limit rows
+  a cable longer than the configured maximum drum length
+  DP failing to allocate any cable for a still-remaining cable set
+
+- **non-critical tag-format errors**
+  These should *not* fail scheduling.
+  They trigger fallback tags instead.
+
+This split is intentional and should be preserved unless the user changes the business priority.
+
+**13. Task / API Boundary Change**
+
+- Before this pass, both view and task effectively assumed drums were always required.
+- After this pass:
+  drums are required for `post_order`
+  drums are optional / ignorable for `pre_order`
+
+This is an important contract change and AG should review it carefully.
+It is needed for correctness because the host app intentionally sends no meaningful drum stock for pre-order.
+
+**14. Test Coverage Added For This Pass**
+
+New tests now cover:
+
+- pre-order stage normalization from mixed-case stage input
+- cable-only normalization for pre-order
+- synthetic pre-order drum generation while ignoring uploaded drums
+- sequence reset per cable type when `{CABLE_TYPE}` is present
+- global sequence behavior when `{CABLE_TYPE}` is absent
+- fallback tag generation when the configured pattern contains unknown variables
+
+The full optimizer test suite now passes at `21 / 21`.
+
+**15. Regression Safety Check Performed**
+
+The existing workbook baseline for the current post-order flow was re-run after this pass.
+
+- Workbook: `sample_input.xlsx`
+- SHA256 unchanged:
+  `8b906ae035c1c4d2332b225ba67e834220256c906abaa8c2180daec8f0b9c2ad`
+
+This is important.
+It means the new stage router did not alter the previously working post-order behavior.
+
+**16. Known Intentional Limitations Of Pre-Order v1**
+
+- WBS-aware pre-order allocation is not implemented yet.
+- Reserve margins and cut waste are not applied yet.
+- Joint constraints are not applied yet.
+- There is no special handling yet for more advanced manufacturer drum-standard logic beyond `std_drum_len_mult`.
+- `{PROJECT}` is still a placeholder fallback until host app sends it.
+- The report contract is preserved, but the business meaning of some statistics differs in pre-order because drum inventory is synthetic.
+
+**17. Important Semantic Difference In Pre-Order Statistics**
+
+Because the drum inventory is synthesized:
+
+- `no_of_drums` represents ordered drums, not uploaded stock drums
+- `no_of_drums_used` should usually equal `no_of_drums`
+- `no_of_full_spare_drums` should usually be `0`
+- `partial_spare_drum_length` represents manufacturing overage from min-length and rounding rules
+
+This is expected behavior and not a bug.
+
+**18. Review Guidance For AG**
+
+AG should focus on:
+
+- whether the min/max/multiple drum-length sizing logic exactly matches the user’s stated business rule
+- whether the tag fallback policy is correctly non-blocking
+- whether the sequence-scope rule is correct and future-proof enough for the next pass
+- whether the task/view relaxation for empty drums in `pre_order` is sufficiently safe
+- whether the current pre-order statistics are semantically acceptable to `host_app`
+
+AG does **not** need to re-review the old SQL-era compatibility path for this feature, because the new pre-order logic does not use it.
+
+**19. Recommended Next-Step Extensions For Future Passes**
+
+Likely next pre-order enhancements, in a safe order:
+
+1. Replace placeholder `Project-XYZ` with real project value from `ds_settings`
+2. Add WBS-aware pre-order allocation modes
+3. Apply reserve margins / cut waste rules
+4. Extend tag variables cleanly, possibly with a dedicated `tag_variables` map in `ds_settings`
+5. Decide whether pre-order reporting needs stage-specific summary labels or extra fields
+
+**20. Maintenance Rule Going Forward**
+
+Any future pre-order enhancement should continue to enter through:
+
+- `ds_settings_parser.py`
+- `preorder_planner.py`
+- `tag_builder.py`
+
+and not by reactivating or extending the old legacy compatibility block in `cable_optimizer.py`.
 
 ---
 

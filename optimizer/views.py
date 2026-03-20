@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from celery.result import AsyncResult
 from django.conf import settings
 from .tasks import run_optimizer
+from optimizer.core.ds_settings_parser import unpack_ds_settings
 
 import logging
 logger = logging.getLogger(__name__)
@@ -18,10 +19,12 @@ class OptimizerSubmitView(APIView):
         try:
             cables = request.data.get('cables', '[]')
             drums = request.data.get('drums', '[]')
-            if not cables or not drums:
-                logger.error("Missing cables or drums data in request")
+            ds_settings = request.data.get("ds_settings", {})
+            parsed_settings = unpack_ds_settings(ds_settings)
+            if not cables or (not parsed_settings.is_pre_order and not drums):
+                logger.error("Missing required optimizer payload data in request")
                 return Response(
-                    {"error": "Cables and drums data are required"},
+                    {"error": "Cables data and the required drum data are missing"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
                 

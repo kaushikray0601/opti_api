@@ -1,21 +1,25 @@
-from django.http import request
+"""Core optimizer orchestration.
+
+The active API path is `control_panel -> allocate_drum_schedule -> report_builder`.
+The legacy compatibility code further below is intentionally kept for reference/parity
+and should not receive new feature work.
+"""
+
 from datetime import datetime
-from datetime import datetime
-import time, os
-import pandas as pd
+import time
 import numpy as np
-from numpy import array, dtype
-import json 
 
 from optimizer.core.dp_engine import (
     create_dp_table,
     fill_drums_sequentially,
     modified_search_algo,
 )
+from optimizer.core.ds_settings_parser import DSSettingsError, unpack_ds_settings
 from optimizer.core.input_normalizer import (
     OptimizerInputError,
     normalize_optimizer_inputs,
 )
+from optimizer.core.preorder_planner import PlanInputs, PreOrderPlanningError, build_preorder_plan
 from optimizer.core.report_builder import build_report, build_schedule_output
 
 # import concurrent.futures # this is for multi processing
@@ -53,30 +57,43 @@ def control_panel(users_cable_data, users_drum_data, ds_settings):
     startTimer = time.time()
 
     try:
-        normalized_input = normalize_optimizer_inputs(
-            users_cable_data,
-            users_drum_data,
-        )
-    except OptimizerInputError as exc:
+        parsed_settings = unpack_ds_settings(ds_settings)
+        if parsed_settings.is_pre_order:
+            plan_inputs = build_preorder_plan(users_cable_data, parsed_settings)
+        else:
+            normalized_input = normalize_optimizer_inputs(
+                users_cable_data,
+                users_drum_data,
+            )
+            plan_inputs = _build_post_order_plan(normalized_input)
+    except (OptimizerInputError, DSSettingsError, PreOrderPlanningError) as exc:
         return {"error": str(exc)}
 
-    drum_schedule = allocate_drum_schedule(normalized_input)
     jsonOutput = build_schedule_output(
-        normalized_input.cable_rows,
-        normalized_input.drum_rows,
-        normalized_input.drum_data,
-        drum_schedule,
+        plan_inputs.cable_rows,
+        plan_inputs.drum_rows,
+        plan_inputs.drum_data,
+        plan_inputs.drum_schedule,
         rev_no,
     )
 
     ds_report = generateReport(
-        normalized_input.cable_rows,
-        normalized_input.drum_rows,
+        plan_inputs.cable_rows,
+        plan_inputs.drum_rows,
         jsonOutput,
     )
     ds_report["ds"] = jsonOutput
     ds_report["computeTime"] = str(round((time.time() - startTimer), 3)) + "s"
     return ds_report
+
+
+def _build_post_order_plan(normalized_input):
+    return PlanInputs(
+        cable_rows=normalized_input.cable_rows,
+        drum_rows=normalized_input.drum_rows,
+        drum_data=normalized_input.drum_data,
+        drum_schedule=allocate_drum_schedule(normalized_input),
+    )
 
 
 def allocate_drum_schedule(normalized_input):
@@ -120,6 +137,8 @@ def allocate_drum_schedule(normalized_input):
     return drum_schedule
    
 
+# Legacy compatibility surface retained from the pre-refactor code path.
+# Keep it stable for reference only; route all new work through `control_panel`.
 class ds():
     
     def drumAllocator(appDataFromSite, dataSource, cableType, isReqfromApp, cable_data, drum_data, uniqCab_cat, uniqDrum_cat, uniq_Wbs, drum_Schedule): # **appDataFromSite = [cabTagfromAPP, cutLengthfromAPP, drumTagfromAPP]

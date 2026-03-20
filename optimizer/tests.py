@@ -4,9 +4,11 @@ from django.test import SimpleTestCase
 
 from optimizer.core.cable_optimizer import control_panel
 from optimizer.core.dp_engine import create_dp_table, fill_drums_sequentially, modified_search_algo
+from optimizer.core.ds_settings_parser import unpack_ds_settings
 from optimizer.core.input_normalizer import (
     OptimizerInputError,
     normalize_cable_dataframe,
+    normalize_cable_inputs,
     normalize_drum_dataframe,
     normalize_optimizer_inputs,
 )
@@ -119,6 +121,48 @@ class InputNormalizerTests(SimpleTestCase):
                 pd.DataFrame([{"cabTag": "C1", "cabDesignLen": "bad", "cabSpec": "T1", "wBS": "W1"}]),
                 pd.DataFrame([{"drumTag": "D1", "cabSpec": "T1", "manufLength": 40}]),
             )
+
+    def test_normalize_cable_inputs_supports_preorder_without_drums(self):
+        normalized = normalize_cable_inputs(
+            pd.DataFrame(
+                [
+                    {"cabTag": "C1", "cabDesignLen": 10, "cabSpec": "T1", "wBS": "W1"},
+                    {"cabTag": "C2", "cabDesignLen": 8, "cabSpec": "T2", "wBS": "W2"},
+                ]
+            )
+        )
+        self.assertEqual(normalized.unique_cable_types, ["T1", "T2"])
+        self.assertEqual(normalized.cable_data[:, 0].tolist(), [0, 1])
+
+
+class DSSettingsParserTests(SimpleTestCase):
+    def test_unpack_ds_settings_normalizes_preorder_payload(self):
+        parsed = unpack_ds_settings(
+            {
+                "stage": "PRE-ORDER",
+                "preorder_stage_input": {
+                    "tag_pattern": "DR-{PROJECT}-{CABLE_TYPE}-{SEQ:3}",
+                    "drum_limits_by_cable_type": [
+                        {
+                            "cab_spec": "T1",
+                            "drum_length_min_m": 8,
+                            "drum_length_max_m": 12,
+                        }
+                    ],
+                    "cutting_allocation_rules": {
+                        "allocation_mode": "free",
+                        "seq_start": 5,
+                        "std_drum_len_mult": 5,
+                    },
+                },
+            }
+        )
+        self.assertTrue(parsed.is_pre_order)
+        self.assertEqual(parsed.stage, "pre_order")
+        self.assertEqual(parsed.project_name, "Project-XYZ")
+        self.assertEqual(parsed.seq_start, 5)
+        self.assertEqual(parsed.std_drum_len_mult, 5)
+        self.assertEqual(parsed.drum_limits_by_cable_type["T1"].max_length_m, 12)
 
 
 class ReportBuilderTests(SimpleTestCase):
@@ -238,3 +282,132 @@ class ControlPanelTests(SimpleTestCase):
         self.assertEqual(report["statistics"]["no_of_full_spare_drums"], 1)
         self.assertEqual(report["statistics"]["no_of_unAllotted_cables"], 2)
         self.assertEqual(report["allot_cab_list"], [])
+
+    def test_control_panel_preorder_generates_synthetic_drums_and_ignores_input_drums(self):
+        cable_df = pd.DataFrame(
+            [
+                {"cabTag": "C1", "cabDesignLen": 11, "cabSpec": "T1", "wBS": "W1"},
+                {"cabTag": "C2", "cabDesignLen": 4, "cabSpec": "T1", "wBS": "W2"},
+            ]
+        )
+        drum_df = pd.DataFrame(
+            [
+                {"drumTag": "IGNORED-1", "cabSpec": "X1", "manufLength": 99},
+            ]
+        )
+        ds_settings = {
+            "stage": "pre_order",
+            "preorder_stage_input": {
+                "tag_pattern": "DR-{PROJECT}-{CABLE_TYPE}-{SEQ:3}",
+                "drum_limits_by_cable_type": [
+                    {
+                        "cab_spec": "T1",
+                        "drum_length_min_m": 8,
+                        "drum_length_max_m": 12,
+                    }
+                ],
+                "cutting_allocation_rules": {
+                    "allocation_mode": "free",
+                    "seq_start": 1,
+                    "std_drum_len_mult": 5,
+                },
+            },
+        }
+
+        report = control_panel(cable_df, drum_df, ds_settings=ds_settings)
+
+        self.assertEqual(report["statistics"]["no_of_drums"], 2)
+        self.assertEqual(report["statistics"]["no_of_drums_used"], 2)
+        self.assertEqual(report["statistics"]["no_of_full_spare_drums"], 0)
+        self.assertEqual(report["statistics"]["partial_spare_drum_length"], 7)
+        self.assertEqual(report["allot_dr_list"][0][2], "DR-Project-XYZ-T1-001")
+        self.assertEqual(report["allot_dr_list"][1][2], "DR-Project-XYZ-T1-002")
+        self.assertNotIn("IGNORED-1", str(report["ds"]))
+
+    def test_control_panel_preorder_resets_sequence_per_cable_type_when_pattern_uses_cable_type(self):
+        cable_df = pd.DataFrame(
+            [
+                {"cabTag": "C1", "cabDesignLen": 5, "cabSpec": "T1", "wBS": "W1"},
+                {"cabTag": "C2", "cabDesignLen": 6, "cabSpec": "T2", "wBS": "W2"},
+            ]
+        )
+        ds_settings = {
+            "stage": "pre_order",
+            "preorder_stage_input": {
+                "tag_pattern": "DR-{PROJECT}-{CABLE_TYPE}-{SEQ:3}",
+                "drum_limits_by_cable_type": [
+                    {"cab_spec": "T1", "drum_length_min_m": 5, "drum_length_max_m": 10},
+                    {"cab_spec": "T2", "drum_length_min_m": 5, "drum_length_max_m": 10},
+                ],
+                "cutting_allocation_rules": {
+                    "allocation_mode": "free",
+                    "seq_start": 1,
+                    "std_drum_len_mult": 1,
+                },
+            },
+        }
+
+        report = control_panel(cable_df, pd.DataFrame(), ds_settings=ds_settings)
+        generated_tags = [row[2] for row in report["allot_dr_list"]]
+
+        self.assertIn("DR-Project-XYZ-T1-001", generated_tags)
+        self.assertIn("DR-Project-XYZ-T2-001", generated_tags)
+
+    def test_control_panel_preorder_uses_global_sequence_when_pattern_has_no_cable_type(self):
+        cable_df = pd.DataFrame(
+            [
+                {"cabTag": "C1", "cabDesignLen": 5, "cabSpec": "T1", "wBS": "W1"},
+                {"cabTag": "C2", "cabDesignLen": 6, "cabSpec": "T2", "wBS": "W2"},
+            ]
+        )
+        ds_settings = {
+            "stage": "pre_order",
+            "preorder_stage_input": {
+                "tag_pattern": "DR-{PROJECT}-{SEQ:3}",
+                "drum_limits_by_cable_type": [
+                    {"cab_spec": "T1", "drum_length_min_m": 5, "drum_length_max_m": 10},
+                    {"cab_spec": "T2", "drum_length_min_m": 5, "drum_length_max_m": 10},
+                ],
+                "cutting_allocation_rules": {
+                    "allocation_mode": "free",
+                    "seq_start": 1,
+                    "std_drum_len_mult": 1,
+                },
+            },
+        }
+
+        report = control_panel(cable_df, pd.DataFrame(), ds_settings=ds_settings)
+        generated_tags = [row[2] for row in report["allot_dr_list"]]
+
+        self.assertEqual(generated_tags, ["DR-Project-XYZ-001", "DR-Project-XYZ-002"])
+
+    def test_control_panel_preorder_falls_back_to_unique_tags_on_invalid_pattern(self):
+        cable_df = pd.DataFrame(
+            [
+                {"cabTag": "C1", "cabDesignLen": 11, "cabSpec": "T1", "wBS": "W1"},
+                {"cabTag": "C2", "cabDesignLen": 4, "cabSpec": "T1", "wBS": "W2"},
+            ]
+        )
+        ds_settings = {
+            "stage": "pre_order",
+            "preorder_stage_input": {
+                "tag_pattern": "DR-{PROJECT}-{UNKNOWN}-{SEQ:3}",
+                "drum_limits_by_cable_type": [
+                    {
+                        "cab_spec": "T1",
+                        "drum_length_min_m": 8,
+                        "drum_length_max_m": 12,
+                    }
+                ],
+                "cutting_allocation_rules": {
+                    "allocation_mode": "free",
+                    "seq_start": 1,
+                    "std_drum_len_mult": 5,
+                },
+            },
+        }
+
+        report = control_panel(cable_df, pd.DataFrame(), ds_settings=ds_settings)
+        generated_tags = [row[2] for row in report["allot_dr_list"]]
+
+        self.assertEqual(generated_tags, ["DR-Project-XYZ-T1-001", "DR-Project-XYZ-T1-002"])
