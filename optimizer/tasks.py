@@ -1,42 +1,35 @@
 from celery import shared_task
-from optimizer.core.cable_optimizer import control_panel  # your refactored function
-import pandas as pd
 from io import StringIO
+import logging
+
+import pandas as pd
 from django.conf import settings
 
-import logging
+from optimizer.core.cable_optimizer import control_panel
+
 logger = logging.getLogger(__name__)
 
-@shared_task(bind=True, time_limit = settings.OPTIMIZER_TIME_LIMIT)  # 5 minutes timeout
+@shared_task(bind=True, time_limit=settings.OPTIMIZER_TIME_LIMIT)
 def run_optimizer(self, input_payload):
-    try:
-        ds_settings = input_payload.get('ds_settings', '[]')
-        cables = input_payload.get('cables', '[]')
-        drums = input_payload.get('drums', '[]')
-        if not cables and not drums:
-            error_msg = "Missing cables or drums data"
-            logger.error(error_msg)
-            self.update_state(state="FAILURE", meta={"error": error_msg})
-            raise ValueError(error_msg)
-        
-        cables_data = pd.read_json(StringIO(cables), orient='records')
-        drums_data = pd.read_json(StringIO(drums), orient='records')       
-         
-        # Call optimization engine
-        result = control_panel(cables_data, drums_data, ds_settings)
-        logger.info("Optimization completed successfully")       
-        # "return result" is replaced by the below two lines. This is to avoid sending large payloads back to the client.
-        self.update_state(state='SUCCESS', meta={"ds_report": result})
-        return {"message": "Optimization complete"}  # return small payload only
+    ds_settings = input_payload.get('ds_settings', '[]')
+    cables = input_payload.get('cables', '[]')
+    drums = input_payload.get('drums', '[]')
 
-    except Exception as e:
-        logger.error(f"Task failed: {str(e)}")
-        self.update_state(state="FAILURE", meta={"error": str(e)})
-        raise
+    if not cables or not drums:
+        error_msg = "Cables and drums data are required"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
 
+    cables_data = pd.read_json(StringIO(cables), orient='records')
+    drums_data = pd.read_json(StringIO(drums), orient='records')
 
+    result = control_panel(cables_data, drums_data, ds_settings)
+    if "error" in result:
+        logger.error(result["error"])
+        raise ValueError(result["error"])
+    logger.info("Optimization completed successfully")
+    return {"ds_report": result}
 
-from celery import shared_task
 
 @shared_task
 def dummy_add(x, y):

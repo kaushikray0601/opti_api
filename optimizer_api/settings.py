@@ -1,25 +1,33 @@
-from pathlib import Path
 import os
+from pathlib import Path
 
 import environ
-env = environ.Env()
-env.read_env()
 
-
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+env = environ.Env()
+env.read_env(BASE_DIR / ".env")
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 SECRET_KEY = env('DJANGO_SECRET_KEY')
+DEBUG = env.bool("DJANGO_DEBUG", default=env.bool("DEBUG", default=False))
+ENV_MODE = env("ENV_MODE", default="dev").strip().lower()
+IS_DOCKER = ENV_MODE == "docker"
 
-DEBUG=(bool, False) 
-DEBUG = env.bool('DEBUG', default=False)
-
-ALLOWED_HOSTS = ['optimizer_api.local', 'localhost', '127.0.0.1','optimizer-api-web']
-USE_X_FORWARDED_HOST = True
+ALLOWED_HOSTS = env.list(
+    "DJANGO_ALLOWED_HOSTS",
+    default=[
+        "optimizer_api.local",
+        "localhost",
+        "127.0.0.1",
+        "optimizer-api-web",
+        "optimizer-api-nginx",
+    ],
+)
+CSRF_TRUSTED_ORIGINS = env.list("DJANGO_CSRF_TRUSTED_ORIGINS", default=[])
+USE_X_FORWARDED_HOST = env.bool("USE_X_FORWARDED_HOST", default=IS_DOCKER)
 
 
 # Application definition
@@ -32,6 +40,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
+    'optimizer',
 ]
 
 MIDDLEWARE = [    
@@ -116,31 +125,54 @@ STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-CELERY_BROKER_URL='redis://localhost:6379/0'
-CELERY_ACCEPT_CONTENT=['json']
-CELERY_TASK_SERIALIZER='json'
-CELERY_RESULT_BACKEND='redis://localhost:6379/0'
-OPTIMIZER_API_KEY='h894-1r89-bdb6-d409-2c1f-572f-ceb0-9b0b'
 OPTIMIZER_TIME_LIMIT=300  # 5 minutes
+OPTIMIZER_API_KEY = env("OPTIMIZER_API_KEY")
+CELERY_TASK_ALWAYS_EAGER = env.bool(
+    "CELERY_TASK_ALWAYS_EAGER",
+    default=DEBUG and not IS_DOCKER,
+)
 
 # Celery and Redis settings
-ENV_MODE = env("ENV_MODE", default="dev")
-IS_DOCKER = ENV_MODE == "docker"
-
-if ENV_MODE == "docker":
+if CELERY_TASK_ALWAYS_EAGER:
+    CELERY_BROKER_URL = env("CELERY_BROKER_URL_EAGER", default="memory://")
+    CELERY_RESULT_BACKEND = env(
+        "CELERY_RESULT_BACKEND_EAGER",
+        default="cache+memory://",
+    )
+elif ENV_MODE == "docker":
     CELERY_BROKER_URL = env("CELERY_BROKER_URL_DOCKER")
     CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND_DOCKER")
 else:
-    CELERY_BROKER_URL = env("CELERY_BROKER_URL_DEV")
-    CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND_DEV")
+    CELERY_BROKER_URL = env(
+        "CELERY_BROKER_URL_DEV",
+        default="redis://localhost:6379/0",
+    )
+    CELERY_RESULT_BACKEND = env(
+        "CELERY_RESULT_BACKEND_DEV",
+        default="redis://localhost:6379/0",
+    )
 
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
+CELERY_TASK_EAGER_PROPAGATES = env.bool(
+    "CELERY_TASK_EAGER_PROPAGATES",
+    default=CELERY_TASK_ALWAYS_EAGER,
+)
+CELERY_TASK_STORE_EAGER_RESULT = env.bool(
+    "CELERY_TASK_STORE_EAGER_RESULT",
+    default=CELERY_TASK_ALWAYS_EAGER,
+)
 
-#Add security-related settings for production:
+# Add security-related settings for production while keeping local HTTP workable.
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-CSRF_COOKIE_SECURE = True
-SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = env.bool(
+    "CSRF_COOKIE_SECURE",
+    default=not DEBUG and IS_DOCKER,
+)
+SESSION_COOKIE_SECURE = env.bool(
+    "SESSION_COOKIE_SECURE",
+    default=not DEBUG and IS_DOCKER,
+)
 X_FRAME_OPTIONS = 'DENY'
 
 # Logging 

@@ -3,7 +3,6 @@ from rest_framework import status
 from rest_framework.response import Response
 from celery.result import AsyncResult
 from django.conf import settings
-import pandas as pd
 from .tasks import run_optimizer
 
 import logging
@@ -19,7 +18,7 @@ class OptimizerSubmitView(APIView):
         try:
             cables = request.data.get('cables', '[]')
             drums = request.data.get('drums', '[]')
-            if not cables and not drums:
+            if not cables or not drums:
                 logger.error("Missing cables or drums data in request")
                 return Response(
                     {"error": "Cables and drums data are required"},
@@ -51,9 +50,8 @@ class OptimizerStatusView(APIView):
             response_data = {"task_id": task_id, "status": task.status,}
                         
             if task.successful():                
-                result_data = task.info or {}
+                result_data = task.result or task.info or {}
                 response_data["result"] = result_data.get("ds_report")
-                # response_data["result"] = task.result
                 
             elif task.failed():           
                 result_data = str(task.result)
@@ -73,4 +71,3 @@ class OptimizerStatusView(APIView):
                 {"error": f"Failed to retrieve task status: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
